@@ -1,0 +1,82 @@
+name: preview
+# Builds any Bunki-app ref with the production builder and publishes it to THIS repo's Pages site.
+# Never touches the live app (AmitabhainArunachala/Bunki-app). One preview is live at a time.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Bunki-app branch, tag or commit to preview"
+        required: true
+        default: main
+      note:
+        description: "One line for preview.json: what this build is"
+        required: false
+        default: ""
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: preview-pages
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PREVIEW_REF: ${{ inputs.ref }}
+      PREVIEW_NOTE: ${{ inputs.note }}
+    steps:
+      - name: Check out Bunki-app at the requested ref
+        uses: actions/checkout@v4
+        with:
+          repository: AmitabhainArunachala/Bunki-app
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          path: app
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install the pinned dependencies
+        working-directory: app
+        run: npm ci --ignore-scripts
+      - name: Build the phone site with the production builder
+        working-directory: app
+        run: node scripts/build-corridor-site.mjs --out "$RUNNER_TEMP/site"
+      - name: Stamp the preview
+        working-directory: app
+        run: |
+          sha=$(git rev-parse HEAD)
+          node -e '
+            const fs = require("fs");
+            const out = process.argv[1];
+            fs.writeFileSync(out, JSON.stringify({
+              preview: true, ref: process.env.PREVIEW_REF, sha: process.env.SHA, note: process.env.PREVIEW_NOTE,
+              built: new Date().toISOString(), live_app: "https://amitabhainarunachala.github.io/Bunki-app/"
+            }, null, 2) + "\n");
+          ' "$RUNNER_TEMP/site/preview.json"
+          echo "Preview of \`$PREVIEW_REF\` @ \`$sha\`" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          SHA: ${{ github.sha }}
+      - name: Smoke test the built site
+        run: |
+          (cd "$RUNNER_TEMP/site" && python3 -m http.server 8765 >/dev/null 2>&1 &)
+          for i in $(seq 1 20); do curl -fsS http://127.0.0.1:8765/ >/dev/null && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8765/build-identity.json >/dev/null
+          curl -fsS http://127.0.0.1:8765/preview.json
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ runner.temp }}/site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - id: deployment
+        uses: actions/deploy-pages@v4
