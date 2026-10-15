@@ -47,17 +47,16 @@ jobs:
         working-directory: app
         run: |
           sha=$(git rev-parse HEAD)
+          export APP_SHA="$sha"
           node -e '
             const fs = require("fs");
             const out = process.argv[1];
             fs.writeFileSync(out, JSON.stringify({
-              preview: true, ref: process.env.PREVIEW_REF, sha: process.env.SHA, note: process.env.PREVIEW_NOTE,
+              preview: true, ref: process.env.PREVIEW_REF, sha: process.env.APP_SHA, note: process.env.PREVIEW_NOTE,
               built: new Date().toISOString(), live_app: "https://amitabhainarunachala.github.io/Bunki-app/"
             }, null, 2) + "\n");
           ' "$RUNNER_TEMP/site/preview.json"
           echo "Preview of \`$PREVIEW_REF\` @ \`$sha\`" >> "$GITHUB_STEP_SUMMARY"
-        env:
-          SHA: ${{ github.sha }}
       - name: Smoke test the built site
         run: |
           (cd "$RUNNER_TEMP/site" && python3 -m http.server 8765 >/dev/null 2>&1 &)
